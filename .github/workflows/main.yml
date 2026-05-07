@@ -17,12 +17,18 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         
-      - name: Debug - List files
+      - name: Prepare Workspace Structure
         run: |
-          echo "=== ROOT ==="
+          echo "=== Moving nested files to root ==="
+          # Memindahkan isi dari folder VirtualApp ke root agar folder 'lib' ada di ./lib
+          if [ -d "VirtualApp" ]; then
+            cp -r VirtualApp/* .
+            # Pindahkan file tersembunyi jika ada
+            cp -r VirtualApp/.[!.]* . 2>/dev/null || true
+            rm -rf VirtualApp
+          fi
+          echo "=== ROOT structure after move ==="
           ls -la
-          echo "=== LIB ==="
-          ls -la lib
           
       - name: Create settings.gradle
         run: |
@@ -60,35 +66,56 @@ jobs:
         
       - name: Patch lib module
         run: |
+          # Sekarang folder lib sudah ada di root
           cd lib
+          
+          # Mencari path source code asli
           OLD_PATH=$(find src/main/java -type d -path "*/com/lody/virtual" | head -1)
           echo "Found: $OLD_PATH"
           
           if [ -z "$OLD_PATH" ]; then
-            echo "Path com/lody/virtual tidak ditemukan!"
+            echo "Path com/lody/virtual tidak ditemukan! Folder lib mungkin kosong atau struktur salah."
+            ls -R src/main/java
             exit 1
           fi
           
+          # Patch semua file source
           find src -type f \( -name "*.java" -o -name "*.kt" -o -name "*.xml" \) -exec sed -i 's/com\.lody\.virtual/com.vmecha.vcore/g' {} +
           
+          # Re-structure folder package
           mkdir -p src/main/java/com/vmecha
           mv "$OLD_PATH" src/main/java/com/vmecha/vcore
           
+          # Clean up assets & libs
           rm -rf src/main/jniLibs/x86 src/main/jniLibs/x86_64
           rm -f src/main/assets/XposedBridge.jar
           
-          sed -i 's/namespace "com.lody.virtual"/namespace "com.vmecha.vcore"/g' build.gradle
-          sed -i 's/compileSdkVersion/compileSdk/g' build.gradle
-          sed -i 's/targetSdkVersion/targetSdk/g' build.gradle
-          sed -i 's/minSdkVersion/minSdk/g' build.gradle
-          sed -i '/jcenter()/d' build.gradle
+          # Update build.gradle module lib
+          # Kita buat baru saja agar lebih bersih dan kompatibel dengan Gradle 8
+          cat > build.gradle << 'EOF'
+          plugins { id 'com.android.library' }
+          android {
+              namespace 'com.vmecha.vcore'
+              compileSdk 34
+              defaultConfig {
+                  minSdk 21
+                  targetSdk 34
+                  ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          dependencies {
+              implementation 'androidx.multidex:multidex:2.0.1'
+          }
+          EOF
           
-          echo "=== build.gradle lib ==="
-          cat build.gradle
-          
-      - name: Patch all imports
+      - name: Patch all imports (Root Level)
         run: |
-          find . -type f \( -name "*.java" -o -name "*.kt" \) -exec sed -i 's/com\.lody\.virtual/com.vmecha.vcore/g' {} +
+          # Pastikan semua referensi di project terganti
+          find . -type f \( -name "*.java" -o -name "*.kt" -o -name "*.xml" -o -name "*.gradle" \) -exec sed -i 's/com\.lody\.virtual/com.vmecha.vcore/g' {} +
           
       - name: Build AAR
         run: |
@@ -100,3 +127,4 @@ jobs:
         with:
           name: vmecha-vm-aar
           path: lib/build/outputs/aar/lib-release.aar
+          
