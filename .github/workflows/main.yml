@@ -1,6 +1,6 @@
 name: Build VMecha AAR
 on: 
-  workflow_dispatch: # Memungkinkan build manual dari tab Actions
+  workflow_dispatch:
 
 jobs:
   build:
@@ -20,17 +20,21 @@ jobs:
 
       - name: Prepare Workspace Structure
         run: |
-          echo "=== Cleaning & Moving files ==="
-          # Pindahkan file dari subfolder ke root jika ada
           if [ -d "VirtualApp" ]; then
             cp -r VirtualApp/* .
             cp -r VirtualApp/.[!.]* . 2>/dev/null || true
             rm -rf VirtualApp
           fi
-          
-          # HAPUS file build lama agar tidak konflik dengan Gradle 9 saat init wrapper
           rm -f build.gradle settings.gradle lib/build.gradle
           
+      - name: Create gradle.properties
+        run: |
+          cat > gradle.properties << 'EOF'
+          android.useAndroidX=true
+          android.enableJetifier=true
+          org.gradle.jvmargs=-Xmx2048m
+          EOF
+
       - name: Create settings.gradle
         run: |
           cat > settings.gradle << 'EOF'
@@ -62,44 +66,37 @@ jobs:
 
       - name: Patch lib module
         run: |
-          # Masuk ke folder lib untuk mulai patching
           cd lib
           
-          # Cari path package asli
+          # 1. Rename Package di Source Code
           OLD_PATH=$(find src/main/java -type d -path "*/com/lody/virtual" | head -1)
-          echo "Found source path: $OLD_PATH"
-          
-          # Replace package name di semua file source (java, kt, xml)
           find src -type f \( -name "*.java" -o -name "*.kt" -o -name "*.xml" \) -exec sed -i 's/com\.lody\.virtual/com.vmecha.vcore/g' {} +
           
-          # Pindahkan folder ke struktur package baru
           if [ ! -z "$OLD_PATH" ]; then
             mkdir -p src/main/java/com/vmecha
             mv "$OLD_PATH" src/main/java/com/vmecha/vcore
           fi
           
-          # Buat build.gradle LIB yang modern
-          cat > build.gradle << 'EOF'
-          plugins {
-              id 'com.android.library'
-          }
+          # 2. Hapus atribut package dari Manifest (WAJIB untuk Gradle 8+)
+          # Ini akan menghapus 'package="com.vmecha.vcore"' atau 'package="com.lody.virtual"'
+          sed -i 's/package="[^"]*"//g' src/main/AndroidManifest.xml
 
+          # 3. Buat build.gradle LIB
+          cat > build.gradle << 'EOF'
+          plugins { id 'com.android.library' }
           android {
               namespace 'com.vmecha.vcore'
               compileSdk 34
-              
               defaultConfig {
                   minSdk 21
                   targetSdk 34
                   ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
               }
-
               compileOptions {
                   sourceCompatibility JavaVersion.VERSION_17
                   targetCompatibility JavaVersion.VERSION_17
               }
           }
-
           dependencies {
               implementation 'androidx.multidex:multidex:2.0.1'
               compileOnly fileTree(dir: 'libs', include: ['*.jar'])
@@ -108,7 +105,6 @@ jobs:
 
       - name: Global Package Rename
         run: |
-          # Pastikan semua string com.lody.virtual hilang dari seluruh project (termasuk manifest)
           find . -type f -not -path '*/.*' -exec sed -i 's/com\.lody\.virtual/com.vmecha.vcore/g' {} +
 
       - name: Build AAR
@@ -121,4 +117,3 @@ jobs:
         with:
           name: vmecha-vcore-release
           path: lib/build/outputs/aar/lib-release.aar
-          
