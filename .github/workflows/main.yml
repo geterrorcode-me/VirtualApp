@@ -1,5 +1,6 @@
 name: Build VMecha AAR
-on: [workflow_dispatch]
+on: 
+  workflow_dispatch: # Memungkinkan build manual dari tab Actions
 
 jobs:
   build:
@@ -7,38 +8,34 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        
+
       - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
-          
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-        
+
       - name: Prepare Workspace Structure
         run: |
-          echo "=== Moving nested files to root ==="
-          # Memindahkan isi dari folder VirtualApp ke root agar folder 'lib' ada di ./lib
+          echo "=== Cleaning & Moving files ==="
+          # Pindahkan file dari subfolder ke root jika ada
           if [ -d "VirtualApp" ]; then
             cp -r VirtualApp/* .
-            # Pindahkan file tersembunyi jika ada
             cp -r VirtualApp/.[!.]* . 2>/dev/null || true
             rm -rf VirtualApp
           fi
-          echo "=== ROOT structure after move ==="
-          ls -la
+          
+          # HAPUS file build lama agar tidak konflik dengan Gradle 9 saat init wrapper
+          rm -f build.gradle settings.gradle lib/build.gradle
           
       - name: Create settings.gradle
         run: |
           cat > settings.gradle << 'EOF'
           pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
           }
           dependencyResolutionManagement {
               repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
@@ -51,80 +48,77 @@ jobs:
           rootProject.name = "VMechaVM"
           include ':lib'
           EOF
-          
+
       - name: Create root build.gradle
         run: |
           cat > build.gradle << 'EOF'
           plugins {
-              id 'com.android.application' version '8.1.0' apply false
               id 'com.android.library' version '8.1.0' apply false
           }
           EOF
-          
+
       - name: Setup Gradle Wrapper
         run: gradle wrapper --gradle-version 8.9
-        
+
       - name: Patch lib module
         run: |
-          # Sekarang folder lib sudah ada di root
+          # Masuk ke folder lib untuk mulai patching
           cd lib
           
-          # Mencari path source code asli
+          # Cari path package asli
           OLD_PATH=$(find src/main/java -type d -path "*/com/lody/virtual" | head -1)
-          echo "Found: $OLD_PATH"
+          echo "Found source path: $OLD_PATH"
           
-          if [ -z "$OLD_PATH" ]; then
-            echo "Path com/lody/virtual tidak ditemukan! Folder lib mungkin kosong atau struktur salah."
-            ls -R src/main/java
-            exit 1
-          fi
-          
-          # Patch semua file source
+          # Replace package name di semua file source (java, kt, xml)
           find src -type f \( -name "*.java" -o -name "*.kt" -o -name "*.xml" \) -exec sed -i 's/com\.lody\.virtual/com.vmecha.vcore/g' {} +
           
-          # Re-structure folder package
-          mkdir -p src/main/java/com/vmecha
-          mv "$OLD_PATH" src/main/java/com/vmecha/vcore
+          # Pindahkan folder ke struktur package baru
+          if [ ! -z "$OLD_PATH" ]; then
+            mkdir -p src/main/java/com/vmecha
+            mv "$OLD_PATH" src/main/java/com/vmecha/vcore
+          fi
           
-          # Clean up assets & libs
-          rm -rf src/main/jniLibs/x86 src/main/jniLibs/x86_64
-          rm -f src/main/assets/XposedBridge.jar
-          
-          # Update build.gradle module lib
-          # Kita buat baru saja agar lebih bersih dan kompatibel dengan Gradle 8
+          # Buat build.gradle LIB yang modern
           cat > build.gradle << 'EOF'
-          plugins { id 'com.android.library' }
+          plugins {
+              id 'com.android.library'
+          }
+
           android {
               namespace 'com.vmecha.vcore'
               compileSdk 34
+              
               defaultConfig {
                   minSdk 21
                   targetSdk 34
                   ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
               }
+
               compileOptions {
                   sourceCompatibility JavaVersion.VERSION_17
                   targetCompatibility JavaVersion.VERSION_17
               }
           }
+
           dependencies {
               implementation 'androidx.multidex:multidex:2.0.1'
+              compileOnly fileTree(dir: 'libs', include: ['*.jar'])
           }
           EOF
-          
-      - name: Patch all imports (Root Level)
+
+      - name: Global Package Rename
         run: |
-          # Pastikan semua referensi di project terganti
-          find . -type f \( -name "*.java" -o -name "*.kt" -o -name "*.xml" -o -name "*.gradle" \) -exec sed -i 's/com\.lody\.virtual/com.vmecha.vcore/g' {} +
-          
+          # Pastikan semua string com.lody.virtual hilang dari seluruh project (termasuk manifest)
+          find . -type f -not -path '*/.*' -exec sed -i 's/com\.lody\.virtual/com.vmecha.vcore/g' {} +
+
       - name: Build AAR
         run: |
           chmod +x gradlew
-          ./gradlew :lib:assembleRelease --stacktrace
-          
+          ./gradlew :lib:assembleRelease --stacktrace --no-daemon
+
       - name: Upload AAR
         uses: actions/upload-artifact@v4
         with:
-          name: vmecha-vm-aar
+          name: vmecha-vcore-release
           path: lib/build/outputs/aar/lib-release.aar
           
