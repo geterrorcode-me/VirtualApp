@@ -1,0 +1,102 @@
+name: Build VMecha AAR
+on: [workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        
+      - name: Debug - List files
+        run: |
+          echo "=== ROOT ==="
+          ls -la
+          echo "=== LIB ==="
+          ls -la lib
+          
+      - name: Create settings.gradle
+        run: |
+          cat > settings.gradle << 'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
+              repositories {
+                  google()
+                  mavenCentral()
+                  maven { url "https://jitpack.io" }
+              }
+          }
+          rootProject.name = "VMechaVM"
+          include ':lib'
+          EOF
+          
+      - name: Create root build.gradle
+        run: |
+          cat > build.gradle << 'EOF'
+          plugins {
+              id 'com.android.application' version '8.1.0' apply false
+              id 'com.android.library' version '8.1.0' apply false
+          }
+          EOF
+          
+      - name: Setup Gradle Wrapper
+        run: gradle wrapper --gradle-version 8.9
+        
+      - name: Patch lib module
+        run: |
+          cd lib
+          OLD_PATH=$(find src/main/java -type d -path "*/com/lody/virtual" | head -1)
+          echo "Found: $OLD_PATH"
+          
+          if [ -z "$OLD_PATH" ]; then
+            echo "Path com/lody/virtual tidak ditemukan!"
+            exit 1
+          fi
+          
+          find src -type f \( -name "*.java" -o -name "*.kt" -o -name "*.xml" \) -exec sed -i 's/com\.lody\.virtual/com.vmecha.vcore/g' {} +
+          
+          mkdir -p src/main/java/com/vmecha
+          mv "$OLD_PATH" src/main/java/com/vmecha/vcore
+          
+          rm -rf src/main/jniLibs/x86 src/main/jniLibs/x86_64
+          rm -f src/main/assets/XposedBridge.jar
+          
+          sed -i 's/namespace "com.lody.virtual"/namespace "com.vmecha.vcore"/g' build.gradle
+          sed -i 's/compileSdkVersion/compileSdk/g' build.gradle
+          sed -i 's/targetSdkVersion/targetSdk/g' build.gradle
+          sed -i 's/minSdkVersion/minSdk/g' build.gradle
+          sed -i '/jcenter()/d' build.gradle
+          
+          echo "=== build.gradle lib ==="
+          cat build.gradle
+          
+      - name: Patch all imports
+        run: |
+          find . -type f \( -name "*.java" -o -name "*.kt" \) -exec sed -i 's/com\.lody\.virtual/com.vmecha.vcore/g' {} +
+          
+      - name: Build AAR
+        run: |
+          chmod +x gradlew
+          ./gradlew :lib:assembleRelease --stacktrace
+          
+      - name: Upload AAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: vmecha-vm-aar
+          path: lib/build/outputs/aar/lib-release.aar
