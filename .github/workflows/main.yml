@@ -20,13 +20,11 @@ jobs:
 
       - name: Prepare Workspace Structure
         run: |
-          # Flatten folder jika nested
           if [ -d "VirtualApp" ]; then
             cp -r VirtualApp/* .
             cp -r VirtualApp/.[!.]* . 2>/dev/null || true
             rm -rf VirtualApp
           fi
-          # Bersihkan file gradle lama agar tidak konflik
           rm -f build.gradle settings.gradle lib/build.gradle
           
       - name: Create gradle.properties
@@ -70,20 +68,20 @@ jobs:
         run: |
           cd lib
           
-          # 1. Cari dan Rename Package Folder
+          # Rename folder package
           OLD_PATH=$(find src/main/java -type d -path "*/com/lody/virtual" | head -1)
           if [ ! -z "$OLD_PATH" ]; then
             mkdir -p src/main/java/com/vmecha
             mv "$OLD_PATH" src/main/java/com/vmecha/vcore
           fi
           
-          # 2. Patch String Package di semua file
+          # Patch string package di source
           find src -type f \( -name "*.java" -o -name "*.kt" -o -name "*.xml" \) -exec sed -i 's/com\.lody\.virtual/com.vmecha.vcore/g' {} +
           
-          # 3. Hapus atribut package dari AndroidManifest (WAJIB untuk AGP 8+)
+          # Bersihkan Manifest dari atribut package lama
           sed -i 's/package="[^"]*"//g' src/main/AndroidManifest.xml
 
-          # 4. Buat build.gradle LIB yang mendukung Java Compilation
+          # Buat build.gradle LIB tanpa komentar bermasalah
           cat > build.gradle << 'EOF'
           plugins { id 'com.android.library' }
           android {
@@ -107,8 +105,6 @@ jobs:
           dependencies {
               implementation 'androidx.multidex:multidex:2.0.1'
               implementation 'androidx.appcompat:appcompat:1.6.1'
-              
-              # Load all local JARs (VirtualApp sangat butuh ini untuk stub/hidden API)
               compileOnly fileTree(dir: 'libs', include: ['*.jar'])
               implementation fileTree(dir: 'libs', include: ['*.jar'])
           }
@@ -116,7 +112,6 @@ jobs:
 
       - name: Global String Replacement
         run: |
-          # Memastikan tidak ada sisa package lama di folder root
           find . -maxdepth 4 -type f -not -path '*/.*' -exec sed -i 's/com\.lody\.virtual/com.vmecha.vcore/g' {} +
 
       - name: Build AAR
