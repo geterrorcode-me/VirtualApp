@@ -39,14 +39,20 @@ jobs:
         run: |
           cat > settings.gradle << 'EOF'
           pluginManagement {
-              repositories { google(); mavenCentral(); gradlePluginPortal() }
+              repositories { 
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
           }
           dependencyResolutionManagement {
               repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
               repositories {
                   google()
                   mavenCentral()
+                  // Tambahkan JitPack dan JCenter untuk library lama
                   maven { url "https://jitpack.io" }
+                  maven { url "https://jcenter.bintray.com/" }
               }
           }
           rootProject.name = "VMechaVM"
@@ -67,8 +73,6 @@ jobs:
       - name: Patch lib module
         run: |
           cd lib
-          
-          # Rename folder package
           for base in src/main/java src/main/aidl; do
             if [ -d "$base/com/lody/virtual" ]; then
               mkdir -p "$base/com/vmecha"
@@ -76,28 +80,21 @@ jobs:
             fi
           done
           
-          # Patch string package di source
           find src -type f \( -name "*.java" -o -name "*.kt" -o -name "*.xml" -o -name "*.aidl" \) -exec sed -i 's/com\.lody\.virtual/com.vmecha.vcore/g' {} +
-          
-          # Hapus atribut package dari Manifest
           sed -i 's/package="[^"]*"//g' src/main/AndroidManifest.xml
 
-          # Buat build.gradle LIB (Komentar sudah diperbaiki ke //)
           cat > build.gradle << 'EOF'
           plugins { id 'com.android.library' }
           android {
               namespace 'com.vmecha.vcore'
               compileSdk 34
-              
               buildFeatures { aidl true }
-              
               defaultConfig {
                   minSdk 21
                   targetSdk 34
                   multiDexEnabled true
                   ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
               }
-
               sourceSets {
                   main {
                       java.srcDirs = ['src/main/java']
@@ -105,30 +102,22 @@ jobs:
                       jniLibs.srcDirs = ['libs']
                   }
               }
-
               compileOptions {
                   sourceCompatibility JavaVersion.VERSION_17
                   targetCompatibility JavaVersion.VERSION_17
               }
-              
               lint { abortOnError false }
           }
-
           dependencies {
-              // Dasar AndroidX
               implementation 'androidx.multidex:multidex:2.0.1'
               implementation 'androidx.appcompat:appcompat:1.6.1'
               implementation 'androidx.recyclerview:recyclerview:1.3.0'
               implementation 'com.google.android.material:material:1.9.0'
               implementation 'androidx.cardview:cardview:1.0.0'
-
-              // Library Pihak Ketiga
               implementation 'org.jdeferred:jdeferred-android-aar:1.2.4'
               implementation 'com.melnykov:floatingactionbutton:1.3.0'
               implementation 'com.jonathanfinerty.once:once:1.0.3'
               implementation 'com.kyleduo.switchbutton:library:1.4.6'
-              
-              // JARs Lokal
               compileOnly fileTree(dir: 'libs', include: ['*.jar'])
               implementation fileTree(dir: 'libs', include: ['*.jar'])
           }
